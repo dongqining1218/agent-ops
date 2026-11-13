@@ -1,0 +1,13 @@
+{
+  "_comment": "到点敲门的地方。加一个定时任务 = 加一条，不改中台代码。",
+  "triggers": [
+    {
+      "name": "仓库日报",
+      "source": "ticker",
+      "type": "repo.daily_check",
+      "subject": "repo:appeal-insight",
+      "summary": "每日仓库只读巡检",
+      "daily_at": "09:00"
+    }
+  ]
+}

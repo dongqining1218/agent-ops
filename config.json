@@ -1,0 +1,17 @@
+{
+  "host": "127.0.0.1",
+  "port": 8765,
+  "data_dir": "data",
+  "rules_file": "rules.json",
+  "triggers_file": "triggers/triggers.json",
+  "report_schema_file": "schemas/report.schema.json",
+  "max_attempts": 3,
+  "lease_ttl_seconds": 50,
+  "lease_max_ttl_seconds": 120,
+  "agent_timeout_seconds": 900,
+  "retry_base_seconds": 15,
+  "retry_max_seconds": 600,
+  "tokens": {
+    "m4-codex": "dev-token-m4-codex"
+  }
+}

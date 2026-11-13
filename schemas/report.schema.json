@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "Agent 自动化中台的执行结论",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["status", "title", "summary", "needs_human"],
+  "properties": {
+    "status": {
+      "enum": ["done", "nothing", "blocked"],
+      "description": "done=有值得汇报的结论；nothing=巡检完没有值得打扰人的事；blocked=需要人才能继续"
+    },
+    "title": {
+      "type": "string",
+      "description": "一句话标题，不超过 30 个字"
+    },
+    "summary": {
+      "type": "string",
+      "description": "结论本身，一到三句话，不写过程"
+    },
+    "findings": {
+      "type": "array",
+      "maxItems": 5,
+      "description": "值得注意的发现，按重要性排序；没有就留空数组",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["what", "why_it_matters", "where"],
+        "properties": {
+          "what": { "type": "string", "description": "发现了什么" },
+          "why_it_matters": { "type": "string", "description": "为什么值得管" },
+          "where": { "type": "string", "description": "文件路径、命令或链接" }
+        }
+      }
+    },
+    "needs_human": {
+      "type": "boolean",
+      "description": "是否必须由人做决定或动手"
+    },
+    "human_question": {
+      "type": "string",
+      "description": "needs_human 为 true 时，一个具体问题；否则留空"
+    }
+  }
+}

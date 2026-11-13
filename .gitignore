@@ -1,0 +1,14 @@
+# 运行数据与本地缓存
+data/
+data-demo/
+*.db
+*.db-wal
+*.db-shm
+
+# codex 本地探针目录
+.codex-home/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/

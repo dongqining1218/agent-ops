@@ -1,0 +1,22 @@
+{
+  "_comment": "P0：只有一条规则。加一种事件 = 加一条规则，不改代码。",
+  "rules": [
+    {
+      "name": "仓库日报",
+      "when": {
+        "source": ["ticker"],
+        "types": ["repo.daily_check"]
+      },
+      "to": {
+        "agent": "m4-codex",
+        "cwd": "/Users/dongqining/Documents/deepseek-harness/default-workspace",
+        "skill": "repo-daily-check",
+        "sandbox": "read-only"
+      },
+      "ask": "对仓库做一次只读巡检，严格按 skill 里的 SOP 执行，最后按输出契约给出结构化日报。",
+      "group": "repo-check",
+      "parallel": 1,
+      "tell": "needed"
+    }
+  ]
+}

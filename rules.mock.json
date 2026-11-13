@@ -1,0 +1,23 @@
+{
+  "_comment": "联调/演示用的规则：runtime=mock，不调模型，只验证链路。真实跑用 rules.json。",
+  "rules": [
+    {
+      "name": "仓库日报",
+      "when": {
+        "source": ["ticker"],
+        "types": ["repo.daily_check"]
+      },
+      "to": {
+        "agent": "m4-codex",
+        "cwd": "/Users/dongqining/Documents/deepseek-harness/default-workspace",
+        "skill": "repo-daily-check",
+        "sandbox": "read-only",
+        "runtime": "mock"
+      },
+      "ask": "对仓库做一次只读巡检，严格按 skill 里的 SOP 执行，最后按输出契约给出结构化日报。",
+      "group": "repo-check",
+      "parallel": 1,
+      "tell": "needed"
+    }
+  ]
+}

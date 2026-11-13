@@ -5,6 +5,7 @@
   "rules_file": "rules.json",
   "triggers_file": "triggers/triggers.json",
   "report_schema_file": "schemas/report.schema.json",
+  "memory_dir": "memory",
   "max_attempts": 3,
   "lease_ttl_seconds": 50,
   "lease_max_ttl_seconds": 120,

@@ -32,6 +32,14 @@ tr:last-child td { border-bottom: 0; }
 .tag.wait { border-color: #6b5320; color: #e3bb63; }
 .tag.run { border-color: #24405e; color: #79b8f5; }
 .mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; color: #8f9bab; }
+.decide { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+input { background: #0f1216; border: 1px solid #2c3540; color: #e6e9ee; border-radius: 7px;
+        padding: 5px 9px; font-size: 12px; min-width: 150px; }
+button { background: #1d2530; border: 1px solid #2c3540; color: #cfd8e3; border-radius: 7px;
+         padding: 5px 11px; font-size: 12px; cursor: pointer; }
+button:hover { border-color: #3d4b5c; color: #fff; }
+button.ok { border-color: #1f5c3a; color: #8fdc9f; }
+button.no { border-color: #6b2731; color: #f0a3ad; }
 .empty { color: #6b7480; padding: 14px 12px; background: #14192000; }
 a { color: #79b8f5; text-decoration: none; }
 a:hover { text-decoration: underline; }
@@ -74,6 +82,7 @@ def render_dashboard(
         ("待我决定", waiting),
         ("在跑", run_counts.get("leased", 0)),
         ("已完成", run_counts.get("completed", 0)),
+        ("已决定", run_counts.get("decided", 0)),
         ("失败", run_counts.get("failed", 0)),
         ("事件总数", sum(counts.get("events", {}).values())),
     ]
@@ -95,7 +104,7 @@ def render_dashboard(
     body.append("</div>")
 
     if inbox:
-        body.append("<h2>需要我</h2>")
+        body.append('<h2>需要我 · <a href="/ui/inbox">去批奏折 →</a></h2>')
         body.append(
             "<table><tr><th>run</th><th>规则</th><th>结论</th><th>问题</th></tr>"
         )
@@ -141,20 +150,40 @@ def render_dashboard(
 
 
 def render_inbox(inbox: List[Dict[str, Any]]) -> str:
-    body = ["<h1>需要我决定</h1><div class=sub>P0 只读展示；决策动作在 P1 接上。</div>"]
+    body = [
+        "<h1>需要我决定</h1>",
+        "<div class=sub>点一下就是决策：决定会写进「定了的事」，并让 Agent 继续往下干。</div>",
+    ]
     if not inbox:
-        body.append("<div class=empty>没有待决定的事。</div>")
+        body.append("<div class=empty>没有待决定的事。这是好状态。</div>")
     else:
-        body.append("<table><tr><th>run</th><th>问题</th><th>建议</th><th>状态</th></tr>")
+        body.append("<table><tr><th>run</th><th>问题</th><th>它查到的情况</th><th>决定</th></tr>")
         for run in inbox:
             report = run.get("report") or {}
+            question = report.get("human_question") or run.get("summary") or ""
+            options = report.get("options") or []
+            buttons = [
+                '<button class=ok name=choice value=approve>同意</button>',
+                '<button class=no name=choice value=reject>拒绝</button>',
+            ]
+            for option in options:
+                if str(option) in ("approve", "reject"):
+                    continue
+                buttons.append(
+                    '<button name=choice value="%s">%s</button>'
+                    % (html.escape(str(option)), html.escape(str(option)))
+                )
             body.append(
-                "<tr><td class=mono>#%s</td><td>%s</td><td>%s</td><td>%s</td></tr>"
+                "<tr><td class=mono>#%s</td><td>%s</td><td>%s</td>"
+                "<td><form method=post action=/ui/decide class=decide>"
+                "<input type=hidden name=run_id value=%s>"
+                "<input name=note placeholder='备注（可空）'>%s</form></td></tr>"
                 % (
                     run["id"],
-                    html.escape(str(report.get("human_question") or run.get("summary") or "")),
-                    html.escape(str(report.get("summary", ""))),
-                    _tag(str(run.get("status", ""))),
+                    html.escape(str(question)),
+                    html.escape(str(report.get("summary") or run.get("summary") or "")),
+                    run["id"],
+                    "".join(buttons),
                 )
             )
         body.append("</table>")

@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from server.config import Config
+from server.memory import render_memory
 
 MAX_SUMMARY = 800
 
@@ -48,10 +49,24 @@ def build_prompt(run: Dict[str, Any], cfg: Config) -> str:
         str(run.get("cwd", "")),
         "",
     ]
+    payload = run.get("e_payload")
+    if payload:
+        lines += [
+            "## 事件内容",
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            "",
+        ]
     if skill_text:
         lines += [
             "## 作业指导书（skill: %s）" % run.get("skill"),
             skill_text,
+            "",
+        ]
+    memory_text = render_memory(cfg.memory_dir)
+    if memory_text:
+        lines += [
+            "## 决策记忆（人已经定过的事，不要重复问）",
+            memory_text,
             "",
         ]
     lines += [

@@ -18,13 +18,14 @@ import logging
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Literal, Optional
 
-from fastapi import FastAPI, Header, HTTPException, Query
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi import FastAPI, Form, Header, HTTPException, Query
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field
 
 from . import views
 from .config import Config, load_config
-from .db import Store, iso, utc_now
+from . import memory
+from .db import ConflictError, Store, iso, utc_now
 from .rules import Rule, load_rules, match_rule
 
 log = logging.getLogger("agent-ops")
@@ -51,6 +52,12 @@ class EventIn(BaseModel):
 class LeaseIn(BaseModel):
     agent: str = Field(..., min_length=1)
     ttl: Optional[int] = Field(None, ge=0, le=600, description="长轮询挂起秒数")
+
+
+class DecisionIn(BaseModel):
+    choice: str = Field(..., min_length=1, description="人做了什么决定，如 approve / reject / 具体选项")
+    note: str = ""
+    decided_by: str = "me"
 
 
 class ConcludeIn(BaseModel):
@@ -136,21 +143,27 @@ def create_app(cfg: Optional[Config] = None) -> FastAPI:
 
     # ---------- 事件接入 ----------
 
-    @app.post("/events")
-    async def post_event(body: EventIn) -> Dict[str, Any]:
-        idem = body.idempotency_key or _derive_key(
-            body.source, body.type, body.subject, body.summary
-        )
-        rule = match_rule(rules_holder["rules"], body.source, body.type)
+    def ingest(
+        source: str,
+        event_type: str,
+        subject: str,
+        summary: str,
+        link: Optional[str],
+        payload: Optional[Dict[str, Any]],
+        idem: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """一条事件进中台：去重 → 匹配规则 → 建派工。事件源和「人做了决定」都走这里。"""
+        idem = idem or _derive_key(source, event_type, subject, summary)
+        rule = match_rule(rules_holder["rules"], source, event_type)
 
         event_id, created = store.add_event(
             idem_key=idem,
-            source=body.source,
-            event_type=body.type,
-            subject=body.subject,
-            summary=body.summary,
-            link=body.link,
-            payload=body.payload,
+            source=source,
+            event_type=event_type,
+            subject=subject,
+            summary=summary,
+            link=link,
+            payload=payload,
             status="queued" if rule else "recorded",
             rule=rule.name if rule else None,
         )
@@ -166,7 +179,7 @@ def create_app(cfg: Optional[Config] = None) -> FastAPI:
             }
 
         if rule is None:
-            log.info("事件无匹配规则，只记录：#%s %s/%s", event_id, body.source, body.type)
+            log.info("事件无匹配规则，只记录：#%s %s/%s", event_id, source, event_type)
             return {
                 "event_id": event_id,
                 "duplicate": False,
@@ -184,6 +197,78 @@ def create_app(cfg: Optional[Config] = None) -> FastAPI:
             "run_id": run_id,
             "rule": rule.name,
         }
+
+    @app.post("/events")
+    async def post_event(body: EventIn) -> Dict[str, Any]:
+        return ingest(
+            source=body.source,
+            event_type=body.type,
+            subject=body.subject,
+            summary=body.summary,
+            link=body.link,
+            payload=body.payload,
+            idem=body.idempotency_key,
+        )
+
+    # ---------- 批奏折：人做决定 ----------
+
+    def decide_run(run_id: int, choice: str, note: str, decided_by: str) -> Dict[str, Any]:
+        decision = store.decide(run_id, choice, note=note, decided_by=decided_by)
+        memory_file = memory.append_decision(
+            cfg.memory_dir,
+            question=decision["question"],
+            choice=choice,
+            note=note,
+            run_id=run_id,
+            source=decision["source"],
+        )
+        question = decision["question"]
+        followup = ingest(
+            source=decision["source"],
+            event_type=decision["type"],
+            subject=decision["subject"],
+            summary="已决定：%s（原问题：%s）" % (choice, question[:120]),
+            link=None,
+            payload={
+                "decision": {
+                    "choice": choice,
+                    "note": note,
+                    "question": question,
+                    "decided_at": decision["decided_at"],
+                },
+                "prior_run": run_id,
+            },
+            idem="decision:%s" % run_id,
+        )
+        log.info(
+            "决策：run=#%s choice=%s → 后续事件 #%s", run_id, choice, followup.get("event_id")
+        )
+        return {"decision": decision, "memory_file": memory_file, "followup": followup}
+
+    @app.post("/api/runs/{run_id}/decide")
+    async def api_decide(run_id: int, body: DecisionIn) -> Dict[str, Any]:
+        try:
+            return decide_run(run_id, body.choice, body.note, body.decided_by)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        except ConflictError as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
+
+    @app.post("/ui/decide")
+    async def ui_decide(
+        run_id: int = Form(...),
+        choice: str = Form(...),
+        note: str = Form(""),
+    ) -> Response:
+        try:
+            decide_run(run_id, choice, note, "me")
+        except (KeyError, ConflictError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
+        return RedirectResponse("/ui/inbox", status_code=303)
+
+    @app.get("/api/decisions")
+    async def api_decisions(limit: int = Query(50, ge=1, le=500)) -> List[Dict[str, Any]]:
+        return store.recent_decisions(limit)
 
     # ---------- 派单（长轮询） ----------
 

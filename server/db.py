@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 EVENT_FINAL = {"done", "failed", "recorded"}
-RUN_FINAL = {"completed", "failed"}
+RUN_FINAL = {"completed", "failed", "decided"}
 RUN_ACTIVE = {"leased", "waiting_human"}
 
 SCHEMA = """
@@ -71,7 +71,24 @@ CREATE TABLE IF NOT EXISTS runs (
 CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
 CREATE INDEX IF NOT EXISTS idx_runs_group ON runs(group_name, status);
 CREATE INDEX IF NOT EXISTS idx_runs_event ON runs(event_id);
+
+CREATE TABLE IF NOT EXISTS decisions (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id     INTEGER NOT NULL UNIQUE REFERENCES runs(id),
+  event_id   INTEGER NOT NULL,
+  question   TEXT NOT NULL DEFAULT '',
+  options    TEXT,
+  choice     TEXT NOT NULL,
+  note       TEXT,
+  decided_by TEXT NOT NULL DEFAULT 'me',
+  decided_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_decisions_event ON decisions(event_id);
 """
+
+
+class ConflictError(RuntimeError):
+    """状态不允许这次操作（重复决策、对非等待态决策等）。"""
 
 
 def utc_now() -> datetime:
@@ -279,6 +296,11 @@ class Store:
             conn.execute("UPDATE events SET status = 'leased' WHERE id = ?", (row["event_id"],))
             conn.commit()
             leased = dict(row)
+            if leased.get("e_payload"):
+                try:
+                    leased["e_payload"] = json.loads(leased["e_payload"])
+                except ValueError:
+                    pass
             leased["status"] = "leased"
             leased["attempts"] = int(leased["attempts"]) + 1
             leased["lease_expires_at"] = expires
@@ -483,6 +505,105 @@ class Store:
                    ORDER BY r.id DESC"""
             ).fetchall()
             return [_run_dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    def decide(
+        self,
+        run_id: int,
+        choice: str,
+        note: str = "",
+        decided_by: str = "me",
+    ) -> Dict[str, Any]:
+        """人做了一个决定：记账、把 run 标成 decided、事件结案，并把上下文返回给调用方去生成后续事件。"""
+        now = iso(utc_now())
+        conn = self.connect()
+        try:
+            row = conn.execute("SELECT * FROM runs WHERE id = ?", (run_id,)).fetchone()
+            if row is None:
+                raise KeyError("run %s 不存在" % run_id)
+            if row["status"] != "waiting_human":
+                raise ConflictError(
+                    "run #%s 当前状态是 %s，只有 waiting_human 才能决策"
+                    % (run_id, row["status"])
+                )
+            event = conn.execute(
+                "SELECT * FROM events WHERE id = ?", (row["event_id"],)
+            ).fetchone()
+            report = None
+            if row["report"]:
+                try:
+                    report = json.loads(row["report"])
+                except ValueError:
+                    report = None
+            question = ""
+            if isinstance(report, dict):
+                question = str(report.get("human_question") or "")
+            if not question:
+                question = str(row["summary"] or "")
+            options = report.get("options") if isinstance(report, dict) else None
+
+            try:
+                conn.execute(
+                    """INSERT INTO decisions
+                       (run_id, event_id, question, options, choice, note, decided_by, decided_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        run_id,
+                        row["event_id"],
+                        question,
+                        json.dumps(options, ensure_ascii=False) if options else None,
+                        choice,
+                        note,
+                        decided_by,
+                        now,
+                    ),
+                )
+            except sqlite3.IntegrityError:
+                raise ConflictError("run #%s 已经决策过了" % run_id)
+            conn.execute(
+                """UPDATE runs SET status='decided', ended_at=?, result_status='decided'
+                   WHERE id=?""",
+                (now, run_id),
+            )
+            conn.execute(
+                "UPDATE events SET status='done', note=? WHERE id=?",
+                ("已决定：%s" % choice, row["event_id"]),
+            )
+            conn.commit()
+            _event = _event_dict(event) if event else {}
+            return {
+                "run_id": run_id,
+                "event_id": row["event_id"],
+                "choice": choice,
+                "note": note,
+                "question": question,
+                "decided_at": now,
+                "source": _event.get("source", ""),
+                "type": _event.get("type", ""),
+                "subject": _event.get("subject", ""),
+                "event_summary": _event.get("summary", ""),
+            }
+        finally:
+            conn.close()
+
+    def get_decision(self, run_id: int) -> Optional[Dict[str, Any]]:
+        conn = self.connect()
+        try:
+            row = conn.execute(
+                "SELECT * FROM decisions WHERE run_id = ?", (run_id,)
+            ).fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
+
+    def recent_decisions(self, limit: int = 50) -> List[Dict[str, Any]]:
+        conn = self.connect()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM decisions ORDER BY id DESC LIMIT ?", (limit,)
+            ).fetchall()
+            return [dict(r) for r in rows]
         finally:
             conn.close()
 

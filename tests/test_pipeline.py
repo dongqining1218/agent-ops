@@ -238,8 +238,81 @@ class PipelineTest(unittest.TestCase):
         inbox = self.client.get("/api/inbox").json()
         self.assertEqual(len(inbox), 1)
         self.assertEqual(inbox[0]["report"]["human_question"], "删不删？")
-        self.assertEqual(self.client.get("/ui/inbox").status_code, 200)
+        inbox_html = self.client.get("/ui/inbox")
+        self.assertEqual(inbox_html.status_code, 200)
+        self.assertIn("action=/ui/decide", inbox_html.text)
+        self.assertIn("value=approve", inbox_html.text)
         self.assertEqual(self.client.get("/").status_code, 200)
+
+    def _need_decision(self, question: str = "要不要删掉这个分支？", **kwargs):
+        body = {"summary": "这件事需要你定", "payload": {"question": question}}
+        body.update(kwargs)
+        run_id = self.post_event(**body).json()["run_id"]
+        self.lease()
+        self.client.post(
+            "/conclude",
+            json={
+                "run_id": run_id,
+                "status": "need_decision",
+                "summary": question,
+                "report": {"needs_human": True, "human_question": question},
+            },
+            headers={"X-Agent-Token": TOKEN},
+        )
+        return run_id
+
+    def test_decision_loop(self) -> None:
+        run_id = self._need_decision()
+        self.assertEqual(len(self.client.get("/api/inbox").json()), 1)
+
+        res = self.client.post(
+            "/api/runs/%d/decide" % run_id, json={"choice": "approve", "note": "删"}
+        )
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertEqual(body["decision"]["choice"], "approve")
+        self.assertEqual(body["followup"]["status"], "queued")
+
+        # 决定写进了记忆库
+        memory_file = Path(body["memory_file"])
+        self.assertTrue(memory_file.exists())
+        text = memory_file.read_text(encoding="utf-8")
+        self.assertIn("要不要删掉这个分支？", text)
+        self.assertIn("approve", text)
+        self.assertIn("删", text)
+
+        # 收件箱清空、run 变 decided、原事件结案
+        self.assertEqual(self.client.get("/api/inbox").json(), [])
+        self.assertEqual(self.store.get_run(run_id)["status"], "decided")
+        decisions = self.client.get("/api/decisions").json()
+        self.assertEqual(len(decisions), 1)
+        self.assertEqual(decisions[0]["run_id"], run_id)
+
+        # 后续事件带着决定，能被领走继续干
+        follow = self.lease().json()
+        self.assertEqual(follow["id"], body["followup"]["run_id"])
+        self.assertEqual(follow["e_payload"]["decision"]["choice"], "approve")
+
+        # 同一条不能决策第二次
+        again = self.client.post("/api/runs/%d/decide" % run_id, json={"choice": "reject"})
+        self.assertEqual(again.status_code, 409)
+
+    def test_decide_rejected_goes_to_rejected_memory(self) -> None:
+        run_id = self._need_decision("要不要公开这个仓库？")
+        body = self.client.post(
+            "/api/runs/%d/decide" % run_id, json={"choice": "reject", "note": "先私有"}
+        ).json()
+        self.assertIn("定了不做的事", body["memory_file"])
+        self.assertTrue(Path(body["memory_file"]).read_text(encoding="utf-8").count("reject") >= 1)
+
+    def test_cannot_decide_a_running_run(self) -> None:
+        run_id = self.post_event().json()["run_id"]
+        res = self.client.post("/api/runs/%d/decide" % run_id, json={"choice": "approve"})
+        self.assertEqual(res.status_code, 409)
+
+    def test_decide_unknown_run_404(self) -> None:
+        res = self.client.post("/api/runs/999/decide", json={"choice": "approve"})
+        self.assertEqual(res.status_code, 404)
 
     def test_unknown_run_conclude_404(self) -> None:
         res = self.client.post(
@@ -256,6 +329,10 @@ class AdapterTest(unittest.TestCase):
         (root / "skills" / "demo" / "SKILL.md").write_text("# 只读巡检", encoding="utf-8")
         (root / "config.json").write_text("{}", encoding="utf-8")
         cfg = load_config(str(root / "config.json"))
+        (root / "memory").mkdir(exist_ok=True)
+        (root / "memory" / "定了的事.md").write_text(
+            "# 定了的事\n\n- 2026-11-13 · 问：要不要删？ → 定：approve\n", encoding="utf-8"
+        )
         prompt = build_prompt(
             {
                 "id": 1,
@@ -265,12 +342,54 @@ class AdapterTest(unittest.TestCase):
                 "e_source": "test",
                 "e_type": "demo",
                 "e_summary": "摘要",
+                "e_payload": {"question": "要不要动这个文件？"},
             },
             cfg,
         )
         self.assertIn("做一次巡检", prompt)
         self.assertIn("# 只读巡检", prompt)
         self.assertIn("JSON schema", prompt)
+        self.assertIn("要不要动这个文件？", prompt)
+        self.assertIn("决策记忆", prompt)
+        self.assertIn("定：approve", prompt)
+        tmp.cleanup()
+
+    def test_mock_executor_asks_when_payload_has_question(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        root = Path(tmp.name)
+        (root / "config.json").write_text("{}", encoding="utf-8")
+        cfg = load_config(str(root / "config.json"))
+        result = mock_adapter.execute(
+            {
+                "id": 8,
+                "ask": "巡检",
+                "e_source": "test",
+                "e_type": "demo",
+                "e_payload": {"question": "删不删？"},
+            },
+            cfg,
+        )
+        self.assertEqual(result["status"], "need_decision")
+        self.assertEqual(result["report"]["human_question"], "删不删？")
+        tmp.cleanup()
+
+    def test_mock_executor_continues_after_decision(self) -> None:
+        tmp = tempfile.TemporaryDirectory()
+        root = Path(tmp.name)
+        (root / "config.json").write_text("{}", encoding="utf-8")
+        cfg = load_config(str(root / "config.json"))
+        result = mock_adapter.execute(
+            {
+                "id": 9,
+                "ask": "巡检",
+                "e_source": "test",
+                "e_type": "demo",
+                "e_payload": {"decision": {"choice": "approve"}, "prior_run": 8},
+            },
+            cfg,
+        )
+        self.assertEqual(result["status"], "completed")
+        self.assertIn("approve", result["report"]["summary"])
         tmp.cleanup()
 
     def test_mock_executor_returns_structured_completion(self) -> None:

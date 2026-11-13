@@ -5,6 +5,9 @@ data-demo/
 *.db-wal
 *.db-shm
 
+# 决策记忆（默认不入库；想让它跨机器可读就删掉这行）
+memory/
+
 # codex 本地探针目录
 .codex-home/
 

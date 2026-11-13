@@ -19,6 +19,7 @@ class Config:
     rules_file: Path = PROJECT_ROOT / "rules.json"
     triggers_file: Path = PROJECT_ROOT / "triggers" / "triggers.json"
     report_schema_file: Path = PROJECT_ROOT / "schemas" / "report.schema.json"
+    memory_dir: Path = PROJECT_ROOT / "memory"
     max_attempts: int = 3
     lease_ttl_seconds: int = 50
     lease_max_ttl_seconds: int = 120
@@ -61,6 +62,9 @@ def load_config(path: Optional[str] = None) -> Config:
     cfg.report_schema_file = _resolve(
         root, str(raw.get("report_schema_file", cfg.report_schema_file))
     )
+    cfg.memory_dir = _resolve(
+        root, os.environ.get("AGENT_OPS_MEMORY_DIR", str(raw.get("memory_dir", "memory")))
+    )
     cfg.max_attempts = int(raw.get("max_attempts", cfg.max_attempts))
     cfg.lease_ttl_seconds = int(raw.get("lease_ttl_seconds", cfg.lease_ttl_seconds))
     cfg.lease_max_ttl_seconds = int(raw.get("lease_max_ttl_seconds", cfg.lease_max_ttl_seconds))
@@ -71,4 +75,5 @@ def load_config(path: Optional[str] = None) -> Config:
 
     cfg.data_dir.mkdir(parents=True, exist_ok=True)
     cfg.runs_dir.mkdir(parents=True, exist_ok=True)
+    cfg.memory_dir.mkdir(parents=True, exist_ok=True)
     return cfg

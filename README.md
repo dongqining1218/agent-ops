@@ -1,5 +1,7 @@
 # Agent Ops —— Agent 自动化调度中台（P0）
 
+> 仓库：<https://github.com/dongqining1218/agent-ops>（私有）
+
 > 把「什么时候开始干活」从人身上拿走的那个调度层。
 > 事件进来 → 查规则 → 排队 → 派给 worker → Agent 干活 → 结构化结论落库 → 一个页面看结果。
 > 人只在「需要决定」时被打扰。

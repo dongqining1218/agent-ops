@@ -6,7 +6,7 @@
 > 事件进来 → 查规则 → 排队 → 派给 worker → Agent 干活 → 结构化结论落库 → 一个页面看结果。
 > 人只在「需要决定」时被打扰。
 
-P0 已完成并跑通端到端（mock 执行器）；真实执行器 `codex` 已接好，但**本机 codex 登录态失效，需要先 `codex login`**。
+P0 已完成并跑通端到端；**真实执行器 `codex` 已跑通**（`gpt-5.6-sol` + `medium` 推理，一次仓库巡检约 76 秒）。
 
 ---
 
@@ -41,7 +41,7 @@ P0 已完成并跑通端到端（mock 执行器）；真实执行器 `codex` 已
 | **批奏折闭环** | `POST /api/runs/{id}/decide` | 决定落库 → 写进决策记忆 → 生成后续事件 → Agent 继续干 |
 | **决策记忆** | `memory/定了的事.md`、`memory/定了不做的事.md` | 带日期和原话；每次执行都注入 Agent 提示词，同类问题不再问 |
 | 执行器可插拔 | `worker/executor.py` | `codex`（真实）/ `mock`（验证链路） |
-| 测试 | `tests/` | 19 项：去重/无规则/派单/串行/重试/租约回收/幂等/决策闭环/记忆写入 |
+| 测试 | `tests/` | 20 项：去重/无规则/派单/串行/重试/租约回收/幂等/决策闭环/记忆写入/严格 schema |
 
 ## 2. 快速开始
 
@@ -110,7 +110,8 @@ agent-ops/
   "name": "中台意见",
   "when": { "source": ["virxact-hub"], "types": ["feedback.new"] },
   "to": { "agent": "m4-codex", "cwd": "~/code/appeal-insight",
-          "skill": "hub-feedback", "sandbox": "read-only", "runtime": "codex" },
+          "skill": "hub-feedback", "sandbox": "read-only", "runtime": "codex",
+          "model": "gpt-5.6-sol", "reasoning": "medium" },
   "ask": "按 skill 里「被中台叫起来」那一节处理。",
   "group": "hub-feedback", "parallel": 2, "tell": "needed"
 }
@@ -181,8 +182,10 @@ Agent 干到一半 → Report 里带 needs_human + human_question
 
 ## 8. 常见问题
 
-**Q：为什么 codex 一直失败？**
-先跑 `codex login`。当前报错是 `refresh token was already used`，属于登录态失效，不是网络问题。另外 `codex exec` 需要完整本地权限（DSH 沙箱下会 EPERM）。
+**Q：codex 报 `model not supported` / `invalid_json_schema`？**
+- 模型：ChatGPT 账号只认 OpenAI 模型，规则里必须写 `"model": "gpt-5.6-sol"`（不写会落到不兼容的默认模型）。
+- schema：OpenAI 严格模式要求 `additionalProperties:false` 时**所有属性都在 `required` 里**，`schemas/report.schema.json` 已按此写死，并有回归测试（`SchemaTest`）。
+- 权限：`codex exec` 需要完整本地权限（受限沙箱下会 EPERM），worker 要在能访问 `~/.codex` 的环境里跑。
 
 **Q：worker 挂了会丢活吗？**
 不会。租约（默认 50 秒）过期后后台 sweeper 自动重派，最多 3 次，之后标失败并在仪表盘可见。

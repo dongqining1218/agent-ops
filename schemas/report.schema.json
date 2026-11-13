@@ -3,7 +3,7 @@
   "title": "Agent 自动化中台的执行结论",
   "type": "object",
   "additionalProperties": false,
-  "required": ["status", "title", "summary", "needs_human"],
+  "required": ["status", "title", "summary", "findings", "needs_human", "human_question"],
   "properties": {
     "status": {
       "enum": ["done", "nothing", "blocked"],
@@ -19,8 +19,7 @@
     },
     "findings": {
       "type": "array",
-      "maxItems": 5,
-      "description": "值得注意的发现，按重要性排序；没有就留空数组",
+      "description": "值得注意的发现（0~3 条），按重要性排序；没有就留空数组",
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -38,7 +37,7 @@
     },
     "human_question": {
       "type": "string",
-      "description": "needs_human 为 true 时，一个具体问题；否则留空"
+      "description": "needs_human 为 true 时写一个具体问题；否则填空字符串"
     }
   }
 }

@@ -321,6 +321,34 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(res.status_code, 404)
 
 
+class SchemaTest(unittest.TestCase):
+    """OpenAI structured outputs 严格模式：additionalProperties=false 时，所有属性都必须在 required 里。"""
+
+    def test_every_object_requires_all_properties(self) -> None:
+        schema = json.loads(
+            (PROJECT_ROOT / "schemas" / "report.schema.json").read_text(encoding="utf-8")
+        )
+
+        def walk(node, path="root"):
+            if not isinstance(node, dict):
+                return
+            if node.get("type") == "object" and "properties" in node:
+                props = set(node["properties"])
+                required = set(node.get("required", []))
+                missing = props - required
+                self.assertFalse(
+                    missing, "%s 的 required 缺少 %s（严格模式会 400）" % (path, sorted(missing))
+                )
+                extra = required - props
+                self.assertFalse(extra, "%s 的 required 有未定义属性 %s" % (path, sorted(extra)))
+                for key, child in node["properties"].items():
+                    walk(child, "%s.%s" % (path, key))
+            if "items" in node:
+                walk(node["items"], "%s.items" % path)
+
+        walk(schema)
+
+
 class AdapterTest(unittest.TestCase):
     def test_build_prompt_contains_skill_and_ask(self) -> None:
         tmp = tempfile.TemporaryDirectory()

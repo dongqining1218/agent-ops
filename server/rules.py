@@ -12,6 +12,7 @@ from typing import List, Optional
 TELL_VALUES = {"needed", "silent"}
 SANDBOX_VALUES = {"read-only", "workspace-write", "danger-full-access"}
 RUNTIME_VALUES = {"codex", "mock"}
+REASONING_VALUES = {"low", "medium", "high", "xhigh"}
 
 
 @dataclass(frozen=True)
@@ -29,6 +30,7 @@ class Rule:
     sandbox: str = "read-only"
     runtime: str = "codex"
     model: Optional[str] = None
+    reasoning: Optional[str] = None
 
     def matches(self, source: str, event_type: str) -> bool:
         if self.sources and source not in self.sources:
@@ -62,6 +64,9 @@ def parse_rules(raw: dict) -> List[Rule]:
         skill = to.get("skill")
         sandbox = str(to.get("sandbox", "read-only"))
         runtime = str(to.get("runtime", "codex"))
+        reasoning = to.get("reasoning")
+        if reasoning is not None and str(reasoning) not in REASONING_VALUES:
+            raise RuleError("规则 %r 的 reasoning 非法：%s" % (name, reasoning))
         tell = str(item.get("tell", "needed"))
         parallel = int(item.get("parallel", 1))
 
@@ -92,6 +97,7 @@ def parse_rules(raw: dict) -> List[Rule]:
                 sandbox=sandbox,
                 runtime=runtime,
                 model=str(to["model"]) if to.get("model") else None,
+                reasoning=str(reasoning) if reasoning else None,
             )
         )
     return rules

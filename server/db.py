@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS runs (
   sandbox          TEXT NOT NULL DEFAULT 'read-only',
   runtime          TEXT NOT NULL DEFAULT 'codex',
   model            TEXT,
+  reasoning        TEXT,
   tell             TEXT NOT NULL DEFAULT 'needed',
   status           TEXT NOT NULL,
   attempts         INTEGER NOT NULL DEFAULT 0,
@@ -137,6 +138,8 @@ class Store:
                 conn.execute(
                     "ALTER TABLE runs ADD COLUMN runtime TEXT NOT NULL DEFAULT 'codex'"
                 )
+            if "reasoning" not in cols:
+                conn.execute("ALTER TABLE runs ADD COLUMN reasoning TEXT")
             conn.commit()
         finally:
             conn.close()
@@ -220,8 +223,8 @@ class Store:
             cur = conn.execute(
                 """INSERT INTO runs
                    (event_id, rule, agent, group_name, parallel_limit, subject, cwd, skill,
-                    ask, sandbox, runtime, model, tell, status, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)""",
+                    ask, sandbox, runtime, model, reasoning, tell, status, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?)""",
                 (
                     event_id,
                     rule.name,
@@ -235,6 +238,7 @@ class Store:
                     rule.sandbox,
                     getattr(rule, "runtime", "codex"),
                     rule.model,
+                    getattr(rule, "reasoning", None),
                     rule.tell,
                     iso(utc_now()),
                 ),

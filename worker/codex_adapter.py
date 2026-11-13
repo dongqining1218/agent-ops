@@ -137,6 +137,8 @@ def execute(run: Dict[str, Any], cfg: Config, dry_run: bool = False) -> Dict[str
     ]
     if run.get("model"):
         cmd += ["-m", str(run["model"])]
+    if run.get("reasoning"):
+        cmd += ["-c", 'model_reasoning_effort="%s"' % str(run["reasoning"])]
     cmd.append(prompt)
 
     env = dict(os.environ)

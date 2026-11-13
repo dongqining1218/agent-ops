@@ -4,8 +4,12 @@
     {
       "name": "仓库日报",
       "when": {
-        "source": ["ticker"],
-        "types": ["repo.daily_check"]
+        "source": [
+          "ticker"
+        ],
+        "types": [
+          "repo.daily_check"
+        ]
       },
       "to": {
         "agent": "m4-codex",
